@@ -1,0 +1,19 @@
+# Merge requests plan, the default branch applies. CI/CD variable: REDIRHUB_API_TOKEN (masked).
+# The GitLab-managed Terraform state keeps the state between pipelines.
+include:
+  - template: Terraform/Base.gitlab-ci.yml
+
+variables:
+  TF_ROOT: redirects
+  TF_STATE_NAME: redirects
+
+stages: [validate, build, deploy]
+
+validate:
+  extends: .terraform:validate
+plan:
+  extends: .terraform:build
+apply:
+  extends: .terraform:deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

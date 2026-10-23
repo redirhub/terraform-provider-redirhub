@@ -1,0 +1,5 @@
+terraform-provider-redirhub
+dist/
+*.tfstate*
+.terraform/
+.terraform.lock.hcl

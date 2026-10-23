@@ -1,0 +1,49 @@
+name: Tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - run: go vet ./...
+      # Unit tests and the acceptance tests against the in-memory API: no credentials needed.
+      - run: go test ./...
+      - name: Docs are up to date
+        run: |
+          go generate ./...
+          git diff --exit-code docs/
+  # Runs TestAccLive against a real workspace. Secret: REDIRHUB_API_TOKEN of a test workspace.
+  acceptance:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform: ['1.5.*', '1.13.*']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+      - run: go test ./... -run TestAccLive -v -timeout 20m
+        env:
+          TF_ACC: '1'
+          REDIRHUB_API_TOKEN: ${{ secrets.REDIRHUB_API_TOKEN }}
