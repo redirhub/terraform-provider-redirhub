@@ -112,7 +112,7 @@ func (m *mockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case parts[0] == "host" && len(parts) == 1 && r.Method == http.MethodPost:
 		host := body["host"].(string)
-		domain := map[string]any{"host": host, "correct": false, "default_require": "cname", "https_requested": body["https_requested"], "force_https": false, "short_links_enabled": body["short_links_enabled"], "refreshes": 0}
+		domain := map[string]any{"host": host, "correct": false, "default_require": "cname", "https_requested": body["https_requested"], "force_https": false, "short_links_enabled": body["short_links_enabled"], "connection_mode": body["connection_mode"], "refreshes": 0}
 		m.domains[host] = domain
 		writeJSON(w, http.StatusOK, m.domainJSON(domain))
 	case parts[0] == "host" && len(parts) >= 2:
@@ -124,7 +124,10 @@ func (m *mockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case len(parts) == 3 && parts[2] == "refresh":
 			domain["refreshes"] = domain["refreshes"].(int) + 1
-			domain["correct"] = domain["refreshes"].(int) >= m.refreshesUntilCorrect
+			// A managed domain's DNS points to us; a self-hosted one's servers answer its check.
+			ok := domain["refreshes"].(int) >= m.refreshesUntilCorrect
+			domain["correct"] = ok && domain["connection_mode"] == "managed"
+			domain["answered"] = ok && domain["connection_mode"] == "self_hosted"
 			writeJSON(w, http.StatusOK, m.domainJSON(domain))
 		case r.Method == http.MethodGet:
 			writeJSON(w, http.StatusOK, m.domainJSON(domain))
@@ -216,9 +219,24 @@ func (m *mockAPI) domainJSON(d map[string]any) map[string]any {
 		map[string]any{"scope": "ssl", "status": "pending"},
 	}}
 	for k, v := range d {
-		if k != "refreshes" {
+		if k != "refreshes" && k != "answered" {
 			out[k] = v
 		}
+	}
+	out["status"], out["self_hosted"] = "dns_pending", nil
+	if d["correct"] == true {
+		out["status"] = "connected"
+	}
+	if d["connection_mode"] == "self_hosted" {
+		out["status"] = "waiting"
+		if d["answered"] == true {
+			out["status"] = "connected"
+		}
+		var record any
+		if host := d["host"].(string); strings.HasPrefix(host, "*.") {
+			record = map[string]any{"type": "CNAME", "name": "_acme-challenge." + host[2:], "value": host[2:] + ".wkqxbq.acmeserver.example.net"}
+		}
+		out["self_hosted"] = map[string]any{"record": record}
 	}
 	return out
 }

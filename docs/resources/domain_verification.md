@@ -3,12 +3,12 @@
 page_title: "redirhub_domain_verification Resource - redirhub"
 subcategory: ""
 description: |-
-  Waits until a domain's DNS points to RedirHub. Create it after the DNS records and make the links that need the domain depend on it. It changes nothing in RedirHub, and destroying it only removes it from the state.
+  Waits until a domain is connected: its DNS points to RedirHub, or for a self_hosted domain your servers answer for it. Create it after the DNS records and make the links that need the domain depend on it. It changes nothing in RedirHub, and destroying it only removes it from the state.
 ---
 
 # redirhub_domain_verification (Resource)
 
-Waits until a domain's DNS points to RedirHub. Create it after the DNS records and make the links that need the domain depend on it. It changes nothing in RedirHub, and destroying it only removes it from the state.
+Waits until a domain is connected: its DNS points to RedirHub, or for a `self_hosted` domain your servers answer for it. Create it after the DNS records and make the links that need the domain depend on it. It changes nothing in RedirHub, and destroying it only removes it from the state.
 
 ## Example Usage
 

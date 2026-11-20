@@ -105,6 +105,7 @@ func TestAccMockLifecycle(t *testing.T) {
 					resource.TestCheckResourceAttrSet("redirhub_link.spring", "alias"),
 					resource.TestCheckResourceAttr("redirhub_domain.go", "dns_records.#", "2"),
 					resource.TestCheckResourceAttr("redirhub_domain.go", "dns_records.0.type", "CNAME"),
+					resource.TestCheckResourceAttr("redirhub_domain.go", "connection_mode", "managed"),
 					resource.TestCheckResourceAttr("data.redirhub_links.redirects", "links.#", "1"),
 					resource.TestCheckResourceAttr("data.redirhub_links.redirects", "links.0.handler", "redirect"),
 				),
@@ -141,6 +142,87 @@ func TestAccMockLifecycle(t *testing.T) {
 				ImportStateVerify: true,
 			},
 		},
+	})
+}
+
+// TestAccMockSelfHosted connects domains through the workspace's own servers: no records of
+// ours for a hostname, the `_acme-challenge` CNAME for a wildcard, the verification waits for the
+// servers' answer, and switching back to managed happens in place.
+func TestAccMockSelfHosted(t *testing.T) {
+	useMockAPI(t)
+	verificationPollEvery = 10 * time.Millisecond
+	config := func(mode string) string {
+		return fmt.Sprintf(`
+resource "redirhub_domain" "shop" {
+  host            = "shop.example.test"
+  connection_mode = %q
+}
+
+resource "redirhub_domain_verification" "shop" {
+  host = redirhub_domain.shop.host
+}
+
+resource "redirhub_domain" "stores" {
+  host            = "*.stores.example.test"
+  connection_mode = "self_hosted"
+}
+
+data "redirhub_domain" "shop" {
+  host       = redirhub_domain_verification.shop.host
+}`, mode)
+	}
+
+	resource.Test(t, resource.TestCase{
+		IsUnitTest:               true,
+		ProtoV6ProviderFactories: testProviders,
+		Steps: []resource.TestStep{
+			{
+				Config: config("self_hosted"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("redirhub_domain.shop", "connection_mode", "self_hosted"),
+					resource.TestCheckResourceAttr("redirhub_domain.shop", "dns_records.#", "0"),
+					resource.TestCheckResourceAttr("redirhub_domain.stores", "dns_records.#", "1"),
+					resource.TestCheckResourceAttr("redirhub_domain.stores", "dns_records.0.type", "CNAME"),
+					resource.TestCheckResourceAttr("redirhub_domain.stores", "dns_records.0.name", "_acme-challenge.stores.example.test"),
+					resource.TestCheckResourceAttr("data.redirhub_domain.shop", "connection_mode", "self_hosted"),
+					resource.TestCheckResourceAttr("data.redirhub_domain.shop", "dns_ok", "true"),
+				),
+			},
+			{
+				// dns_ok in the state is from before the verification connected it; the import reads it now.
+				ResourceName:            "redirhub_domain.shop",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"dns_ok"},
+			},
+			{
+				Config: config("managed"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("redirhub_domain.shop", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("redirhub_domain.shop", "connection_mode", "managed"),
+					resource.TestCheckResourceAttr("redirhub_domain.shop", "dns_records.#", "2"),
+				),
+			},
+		},
+	})
+
+	// The integration needs its rules and check path, which the provider does not manage.
+	resource.Test(t, resource.TestCase{
+		IsUnitTest:               true,
+		ProtoV6ProviderFactories: testProviders,
+		Steps: []resource.TestStep{{
+			Config: `
+resource "redirhub_domain" "x" {
+  host            = "x.example.test"
+  connection_mode = "integration"
+}`,
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile(`value must be one of`),
+		}},
 	})
 }
 

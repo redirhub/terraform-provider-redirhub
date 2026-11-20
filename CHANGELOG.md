@@ -1,3 +1,8 @@
+## Unreleased
+
+- `redirhub_domain`: `connection_mode` (`managed`, the default, or `self_hosted`) connects a domain through your own servers with Self-Hosted TLS, and switches it in place. A self-hosted domain lists no records of ours in `dns_records` (a wildcard lists its `_acme-challenge` CNAME), and `dns_ok` and `redirhub_domain_verification` wait for your servers' answer instead of DNS pointing to RedirHub.
+- Data source `redirhub_domain`: `connection_mode`.
+
 ## 0.1.0
 
 First release.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -12,7 +13,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/redirhub/terraform-provider-redirhub/internal/client"
@@ -35,6 +38,7 @@ type domainModel struct {
 	HTTPS      types.Bool   `tfsdk:"https"`
 	ForceHTTPS types.Bool   `tfsdk:"force_https"`
 	ShortLinks types.Bool   `tfsdk:"short_links"`
+	Mode       types.String `tfsdk:"connection_mode"`
 	DNSOK      types.Bool   `tfsdk:"dns_ok"`
 	DNSRecords types.List   `tfsdk:"dns_records"`
 }
@@ -52,7 +56,7 @@ func (r *domainResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *domainResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "A domain connected to the workspace. Its `dns_records` can feed your DNS provider's record resource, so the domain points to RedirHub in the same apply.",
+		Description: "A domain connected to the workspace. Its `dns_records` can feed your DNS provider's record resource, so the domain is connected in the same apply.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
@@ -76,17 +80,46 @@ func (r *domainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional: true, Computed: true, Default: booldefault.StaticBool(false),
 				Description: "Allow short links and QR codes on the domain.",
 			},
+			"connection_mode": schema.StringAttribute{
+				Optional: true, Computed: true, Default: stringdefault.StaticString("managed"),
+				Description: "How the domain is served. `managed` (the default): its DNS points to RedirHub, which serves its redirects, links and HTTPS. " +
+					"`self_hosted`: your own servers run the RedirHub container and serve HTTPS for it with the certificates RedirHub issues and renews; " +
+					"point its DNS at your servers. Needs a workspace with Self-Hosted TLS. Changing it switches the domain in place.",
+				Validators: []validator.String{stringvalidator.OneOf("managed", "self_hosted")},
+			},
 			"dns_ok": schema.BoolAttribute{
 				Computed:    true,
-				Description: "Whether the domain's DNS pointed to RedirHub at the last check.",
+				Description: "Whether the domain was connected at the last check: its DNS points to RedirHub, or for `self_hosted` your servers answered for it.",
 			},
 			"dns_records": schema.ListAttribute{
 				Computed:      true,
 				ElementType:   dnsRecordType,
-				Description:   "The records to create at your DNS provider: the CNAME (or A record for an apex domain) and the TXT verification record.",
-				PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()},
+				Description:   "The records to create at your DNS provider. `managed`: the CNAME (or A record for an apex domain) and the TXT verification record. `self_hosted`: none for a hostname, whose DNS points at your servers; for a wildcard, the `_acme-challenge` CNAME that proves it.",
+				PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown(), recordsFollowMode{}},
 			},
 		},
+	}
+}
+
+// recordsFollowMode leaves dns_records unknown when connection_mode changes, since the records
+// the domain needs change with it.
+type recordsFollowMode struct{}
+
+func (recordsFollowMode) Description(context.Context) string {
+	return "The records change when connection_mode does."
+}
+
+func (m recordsFollowMode) MarkdownDescription(ctx context.Context) string { return m.Description(ctx) }
+
+func (recordsFollowMode) PlanModifyList(ctx context.Context, req planmodifier.ListRequest, resp *planmodifier.ListResponse) {
+	if req.State.Raw.IsNull() {
+		return
+	}
+	var planned, current types.String
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("connection_mode"), &planned)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("connection_mode"), &current)...)
+	if !planned.Equal(current) {
+		resp.PlanValue = types.ListUnknown(dnsRecordType)
 	}
 }
 
@@ -108,6 +141,7 @@ func (r *domainResource) Create(ctx context.Context, req resource.CreateRequest,
 		"host":                plan.Host.ValueString(),
 		"https_requested":     plan.HTTPS.ValueBool(),
 		"short_links_enabled": plan.ShortLinks.ValueBool(),
+		"connection_mode":     plan.Mode.ValueString(),
 	})
 	if err == nil && plan.ForceHTTPS.ValueBool() {
 		domain, err = r.client.UpdateDomain(ctx, domain.Host, map[string]any{"force_https": true})
@@ -146,11 +180,16 @@ func (r *domainResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	domain, err := r.client.UpdateDomain(ctx, state.ID.ValueString(), map[string]any{
+	changes := map[string]any{
 		"https_requested":     plan.HTTPS.ValueBool(),
 		"force_https":         plan.ForceHTTPS.ValueBool(),
 		"short_links_enabled": plan.ShortLinks.ValueBool(),
-	})
+	}
+	// Sent only when it changes: switching is the one thing the API checks it for.
+	if !plan.Mode.Equal(state.Mode) {
+		changes["connection_mode"] = plan.Mode.ValueString()
+	}
+	domain, err := r.client.UpdateDomain(ctx, state.ID.ValueString(), changes)
 	if err != nil {
 		resp.Diagnostics.AddError("Could not update the domain", err.Error())
 		return
@@ -184,24 +223,46 @@ func (r *domainResource) fill(m *domainModel, d *client.Domain) {
 	m.HTTPS = types.BoolValue(d.HTTPSRequested)
 	m.ForceHTTPS = types.BoolValue(d.ForceHTTPS)
 	m.ShortLinks = types.BoolValue(d.ShortLinksEnabled)
-	m.DNSOK = types.BoolValue(d.Correct)
+	m.Mode = types.StringValue(d.ConnectionMode)
+	m.DNSOK = types.BoolValue(connected(d))
 	m.DNSRecords = dnsRecords(d)
 }
 
+// connected reports whether the domain was connected at the last check: its DNS points to
+// RedirHub, or a domain proven by a check (self-hosted) passed it.
+func connected(d *client.Domain) bool {
+	if d.ConnectionMode == "" || d.ConnectionMode == "managed" {
+		return d.Correct
+	}
+	return d.Status == "connected"
+}
+
 // dnsRecords lists the records the domain needs: the pointing record RedirHub suggests for it
-// (a CNAME, or an A record where a CNAME cannot go) and the verification TXT record.
+// (a CNAME, or an A record where a CNAME cannot go) and the verification TXT record. A
+// self-hosted domain points at your own servers instead, so it needs none of them; a wildcard
+// still needs its `_acme-challenge` CNAME.
 func dnsRecords(d *client.Domain) types.List {
 	elements := []attr.Value{}
+	if d.ConnectionMode != "" && d.ConnectionMode != "managed" {
+		if d.SelfHosted != nil && d.SelfHosted.Record != nil {
+			elements = append(elements, dnsRecordValue(*d.SelfHosted.Record))
+		}
+		return types.ListValueMust(dnsRecordType, elements)
+	}
 	for _, rec := range d.Require {
 		wanted := rec.Scope == d.DefaultRequire || strings.HasPrefix(rec.Scope, "ver")
 		if !wanted || rec.Value == "" {
 			continue
 		}
-		elements = append(elements, types.ObjectValueMust(dnsRecordType.AttrTypes, map[string]attr.Value{
-			"name":  types.StringValue(rec.Name),
-			"type":  types.StringValue(rec.Type),
-			"value": types.StringValue(rec.Value),
-		}))
+		elements = append(elements, dnsRecordValue(rec))
 	}
 	return types.ListValueMust(dnsRecordType, elements)
+}
+
+func dnsRecordValue(rec client.DNSRecord) attr.Value {
+	return types.ObjectValueMust(dnsRecordType.AttrTypes, map[string]attr.Value{
+		"name":  types.StringValue(rec.Name),
+		"type":  types.StringValue(rec.Type),
+		"value": types.StringValue(rec.Value),
+	})
 }

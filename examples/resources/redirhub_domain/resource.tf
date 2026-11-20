@@ -14,3 +14,14 @@ resource "cloudflare_dns_record" "redirhub" {
   ttl     = 300
   proxied = false
 }
+
+# Serve HTTPS from your own servers with Self-Hosted TLS: point the DNS at them, not at RedirHub.
+resource "redirhub_domain" "shop" {
+  host            = "shop.example.com"
+  connection_mode = "self_hosted"
+}
+
+# Wait until your servers answer for it; its certificate follows.
+resource "redirhub_domain_verification" "shop" {
+  host = redirhub_domain.shop.host
+}
