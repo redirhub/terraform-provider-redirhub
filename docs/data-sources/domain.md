@@ -31,6 +31,7 @@ output "points_to_redirhub" {
 
 ### Read-Only
 
+- `connection_mode` (String) `managed`, `integration` or `self_hosted`.
 - `dns_ok` (Boolean)
 - `dns_records` (List of Object) (see [below for nested schema](#nestedatt--dns_records))
 - `force_https` (Boolean)

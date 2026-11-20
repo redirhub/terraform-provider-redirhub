@@ -27,13 +27,14 @@ func (d *domainDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 	resp.Schema = schema.Schema{
 		Description: "A domain already connected to the workspace.",
 		Attributes: map[string]schema.Attribute{
-			"id":          schema.StringAttribute{Computed: true},
-			"host":        schema.StringAttribute{Required: true},
-			"https":       schema.BoolAttribute{Computed: true},
-			"force_https": schema.BoolAttribute{Computed: true},
-			"short_links": schema.BoolAttribute{Computed: true},
-			"dns_ok":      schema.BoolAttribute{Computed: true},
-			"dns_records": schema.ListAttribute{Computed: true, ElementType: dnsRecordType},
+			"id":              schema.StringAttribute{Computed: true},
+			"host":            schema.StringAttribute{Required: true},
+			"https":           schema.BoolAttribute{Computed: true},
+			"force_https":     schema.BoolAttribute{Computed: true},
+			"short_links":     schema.BoolAttribute{Computed: true},
+			"connection_mode": schema.StringAttribute{Computed: true, Description: "`managed`, `integration` or `self_hosted`."},
+			"dns_ok":          schema.BoolAttribute{Computed: true},
+			"dns_records":     schema.ListAttribute{Computed: true, ElementType: dnsRecordType},
 		},
 	}
 }

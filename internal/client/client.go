@@ -305,6 +305,17 @@ type Domain struct {
 	HTTPSRequested    bool        `json:"https_requested"`
 	ForceHTTPS        bool        `json:"force_https"`
 	ShortLinksEnabled bool        `json:"short_links_enabled"`
+	// ConnectionMode is `managed` (its DNS points to RedirHub), `integration` or `self_hosted`.
+	ConnectionMode string `json:"connection_mode"`
+	// Status is `connected`, `dns_pending`, or for a domain proven by a check `waiting` or `sync_stopped`.
+	Status     string      `json:"status"`
+	SelfHosted *SelfHosted `json:"self_hosted"`
+}
+
+// SelfHosted is how the workspace's own servers prove a self-hosted domain.
+type SelfHosted struct {
+	// Record is, for a wildcard, the `_acme-challenge` CNAME that proves it; nil otherwise.
+	Record *DNSRecord `json:"record"`
 }
 
 func (c *Client) CreateDomain(ctx context.Context, input map[string]any) (*Domain, error) {

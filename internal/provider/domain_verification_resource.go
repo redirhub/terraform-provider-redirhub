@@ -18,14 +18,14 @@ import (
 
 var _ resource.ResourceWithConfigure = &domainVerificationResource{}
 
-// verificationPollEvery is how often the DNS is checked again while waiting.
+// verificationPollEvery is how often the domain is checked again while waiting.
 var verificationPollEvery = 15 * time.Second
 
 func NewDomainVerificationResource() resource.Resource {
 	return &domainVerificationResource{pollEvery: verificationPollEvery}
 }
 
-// domainVerificationResource waits until a domain points to RedirHub, the way
+// domainVerificationResource waits until a domain is connected, the way
 // aws_acm_certificate_validation waits for a certificate: it goes after the DNS records, and
 // the links that need the domain go after it.
 type domainVerificationResource struct {
@@ -45,7 +45,7 @@ func (r *domainVerificationResource) Metadata(_ context.Context, req resource.Me
 
 func (r *domainVerificationResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Waits until a domain's DNS points to RedirHub. Create it after the DNS records and make the links that need the domain depend on it. It changes nothing in RedirHub, and destroying it only removes it from the state.",
+		Description: "Waits until a domain is connected: its DNS points to RedirHub, or for a `self_hosted` domain your servers answer for it. Create it after the DNS records and make the links that need the domain depend on it. It changes nothing in RedirHub, and destroying it only removes it from the state.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
@@ -93,12 +93,12 @@ func (r *domainVerificationResource) Create(ctx context.Context, req resource.Cr
 			resp.Diagnostics.AddError("Could not check the domain's DNS", err.Error())
 			return
 		}
-		if domain.Correct {
+		if connected(domain) {
 			break
 		}
 		if time.Now().Add(r.pollEvery).After(deadline) {
-			resp.Diagnostics.AddError("The domain does not point to RedirHub yet",
-				fmt.Sprintf("%s did not point to RedirHub within %s. Check its records against redirhub_domain.dns_records, or raise timeout.", host, timeout))
+			resp.Diagnostics.AddError("The domain is not connected yet",
+				fmt.Sprintf("%s was not connected within %s. Check its records against redirhub_domain.dns_records (for a self-hosted domain, that its DNS points at servers running the container), or raise timeout.", host, timeout))
 			return
 		}
 		select {
